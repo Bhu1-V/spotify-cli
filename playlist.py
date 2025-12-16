@@ -23,6 +23,7 @@ class playlist:
             new_node.prev = new_node
             self.head = new_node
             self.tail = new_node
+            self.current_song = new_node
         else:
             new_node.prev = self.tail
             new_node.next = self.head
@@ -79,7 +80,7 @@ class playlist:
             current = current.next
 
     def play(self):
-        if not self.songs_head:
+        if not self.current_song:
             print("Playlist is empty.")
             return
 
@@ -96,6 +97,7 @@ class playlist:
 
         self.current_song = self.current_song.next
         print(f"Now playing: {self.current_song.song.info()}")
+        return self.current_song.song
 
     def previous_song(self):
         if not self.is_playing:
@@ -104,3 +106,11 @@ class playlist:
 
         self.current_song = self.current_song.prev
         print(f"Now playing: {self.current_song.song.info()}")
+        return self.current_song.song
+    
+    def get_current(self):
+        if not self.current_song:
+            print("No song is currently playing.")
+            return
+        self.is_playing = True
+        return self.current_song.song.get_complete_file_path()

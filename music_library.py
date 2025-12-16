@@ -1,6 +1,19 @@
+import os
+from song import song
+
 class music_library:
-    def __init__(self):
-        self.songs = {}
+    def __init__(self, path):
+        self.path = path
+        self.songs = self.fetch_songs_from_directory(path)
+
+    def fetch_songs_from_directory(self, path):
+        songs = {}
+        for filename in os.listdir(path):
+            if filename.endswith(".mp3") or filename.endswith(".wav"):
+                file_path = os.path.join(path, filename)
+                new_song = song(file_path)
+                songs[new_song.title] = new_song
+        return songs
 
     def add_song(self, song):
         self.songs[song.title] = song
