@@ -4,49 +4,59 @@ from rich.layout import Layout
 from rich.table import Table
 from rich.progress import Progress, BarColumn, TextColumn
 from rich.align import Align
-
+import msvcrt
 import time
 import os
 import music_library
 import playlist
 import song
 
-def format_duration(seconds):
-    """Return MM:SS (or M:SS) formatted duration; safe for non-ints."""
-    try:
-        s = int(seconds)
-    except (TypeError, ValueError):
-        return str(seconds)
-    minutes = s // 60
-    secs = s % 60
-    return f"{minutes}:{secs:02d}"
+def format_time(seconds):
+    """Helper to convert seconds (float) to MM:SS string."""
+    seconds = int(seconds)
+    m, s = divmod(seconds, 60)
+    return f"{m:02}:{s:02}"
 
 console = Console()
 
-def render_vibestream_dashboard(playlist, current_song_node, playlist_head):
+def render_vibestream_dashboard(playlist, current_song_node, playlist_head, playback_engine):
     """
-    Renders the UI using the 'rich' library.
-    Args:
-        playlist: The playlist object.
-        current_song_node: The node currently playing.
-        playlist_head: The start of the linked list (to show the queue).
+    Renders the UI using the 'rich' library with a dynamic progress bar.
     """
-    console.clear() # Clears screen cleanly
+    console.clear() 
 
     # --- 1. THE NOW PLAYING PANEL ---
     if current_song_node:
         song = current_song_node.song
         
-        # Create a visual progress bar (static for now)
-        # In a real app, you'd calculate this based on timer
-        prog_bar = "[green]▬▬▬▬▬▬▬▬▬▬▬▬▬▬▬▬▬▬[/green][grey]🔘════════════[/grey]"
+        # 1. Get dynamic time values
+        current_time = playback_engine.get_time()
+        total_duration = song.duration if song.duration > 0 else 1  # Prevent div/0
         
-        # The content inside the box
+        # 2. Calculate progress percentage (0.0 to 1.0)
+        percent = min(current_time / total_duration, 1.0)
+        
+        # 3. Construct the visual bar
+        bar_width = 30  # Total characters in the bar
+        filled_slots = int(bar_width * percent)
+        empty_slots = bar_width - filled_slots
+        
+        # [green]▬▬▬▬[/] [white]🔘[/] [grey]────[/]
+        prog_bar = (
+            f"[green]{'▬' * filled_slots}[/]"
+            f"[white]🔘[/]"
+            f"[grey]{'─' * empty_slots}[/]"
+        )
+
+        # 4. Format the text
+        # Use format_time helper for clean MM:SS display
+        time_display = f"{format_time(current_time)} / {format_time(total_duration)}"
+        
         now_playing_text = f"""
         [bold white size=20]{song.title}[/]\n
         [italic cyan]{song.artist}[/]
-        [dim]{song.genre} • {format_duration(song.duration)}[/]\n
-        {prog_bar}  1:20 / {format_duration(song.duration)}
+        [dim]{song.genre}[/]\n
+        {prog_bar}  {time_display}
         """
         
         main_panel = Panel(
@@ -65,20 +75,22 @@ def render_vibestream_dashboard(playlist, current_song_node, playlist_head):
     queue_table.add_column("Artist")
     queue_table.add_column("Duration", justify="right")
 
-    # Iterate through your Doubly Linked List to populate table
-    # LIMITATION: Only show next 5 songs so we don't flood screen
     temp = playlist_head
     idx = 1
-    while temp and idx <= 5:
-        # Mark the currently playing song with a star
-        prefix = "▶" if temp == current_song_node else str(idx)
-        style = "bold white" if temp == current_song_node else "white"
+    # Limit to 5 rows to keep UI clean
+    while temp and idx <= playlist.song_count: 
+        # Mark the currently playing song
+        is_playing = (temp == current_song_node)
+        prefix = "▶" if is_playing else str(idx)
+        
+        # Highlight current song row
+        title_style = "bold green" if is_playing else "white"
         
         queue_table.add_row(
             prefix,
-            f"[{style}]{temp.song.title}[/]",
+            f"[{title_style}]{temp.song.title}[/]",
             temp.song.artist,
-            format_duration(temp.song.duration)
+            format_time(temp.song.duration)
         )
         temp = temp.next
         idx += 1
@@ -126,25 +138,42 @@ if __name__ == "__main__":    # For testing purposes, create dummy song nodes an
         console.print("[red]Error: miniaudio library is required for playback functionality.[/]")
         exit(1)
 
-    playback_engine.play(playlist_instance.get_current())
+    # Start the first song
+    if playlist_instance.get_current():
+         # Assuming get_current() returns a Node, and we need the filepath
+         first_song = playlist_instance.get_current()
+         playback_engine.play(first_song)
 
-    # UI Render Loop
+    console.clear()
+    should_quit = False
+
+    # --- UI RENDER LOOP ---
     while not should_quit:
+        # 1. Render the Dashboard
         render_vibestream_dashboard(
             playlist_instance,
             playlist_instance.current_song,
-            playlist_instance.songs_head
+            playlist_instance.songs_head,
+            playback_engine
         )
 
-        time.sleep(0.5)  # Small delay to avoid excessive CPU usage
+        # 2. Check for User Input (Non-Blocking)
+        # msvcrt.kbhit() returns True if a key is waiting to be read
+        if msvcrt.kbhit():
+            # getch() reads the key. decode() converts bytes to string.
+            key = msvcrt.getch().decode('utf-8').lower()
+            
+            if key == 'q':
+                should_quit = True
+            elif key == 'n':
+                handle_next(playlist_instance, playback_engine)
+            elif key == 'p':
+                handle_prev(playlist_instance, playback_engine)
+        
+        # 3. Short sleep to prevent high CPU usage, but keep UI responsive
+        time.sleep(0.1)
 
-        # Handle user input
-        if console.input("[bold yellow]Enter Command:[/] ").strip().lower() == 'q':
-            handle_quit()
-        elif console.input("[bold yellow]Enter Command:[/] ").strip().lower() == 'n':
-            handle_next(playlist_instance, playback_engine)
-        elif console.input("[bold yellow]Enter Command:[/] ").strip().lower() == 'p':
-            handle_prev(playlist_instance, playback_engine)
-
-    console.clear()
+    # Cleanup
+    playback_engine.stop()
+    playback_engine.close()
     console.print("[bold green]Thanks for using Vibestream! Goodbye![/]")
